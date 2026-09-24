@@ -133,6 +133,9 @@ Args parseArgs(
         else if (arg == "--spasqr-taus")a.spasqrTaus = next();
         else if (arg == "--sageld-method")a.sageldMethod = next();
         else if (arg == "--envir-name")a.envName = next();
+        else if (arg == "--time-name")a.timeName = next();
+        else if (arg == "--gee-model")a.geeModel = next();
+        else if (arg == "--working-corr")a.workingCorr = next();
         else if (arg == "--spagxe-marginal-cutoff")a.spagxeMarginalCutoff = parseDouble(next(), arg);
         else if (arg == "--spasqr-tol")a.spasqrTol = parseDouble(next(), arg);
         else if (arg == "--spasqr-h")a.spasqrH = parseDouble(next(), arg);

@@ -153,7 +153,7 @@ in a later invocation via --pheno PREFIX.null.resid[.gz|.zst] --resid-name ....)
 inline const FlagDef kLongitudinal = {
     "--longitudinal", nullptr,
     "Treat --pheno as a long-format (repeated-measures) phenotype",
-    R"(SPACox / SPAmix / SPAGRM only.  --pheno must be a long-format file with
+    R"(SPACox / SPAmix / SPAGRM.  --pheno must be a long-format file with
 one row per measurement (>= 1 row per IID), like the SAGELD pheno-mode
 input.  For each --pheno-name outcome a random-intercept linear mixed
 null model  Y ~ X + (1 | IID)  is fit (X = intercept + --covar-name
@@ -163,7 +163,34 @@ genetic effect).  There is no environment / random-slope term, so
 --envir-name and G x E are not involved.  Incompatible with --resid-name,
 --regression-model, and --envir-name.  For SPAmix, every --pc-cols column
 must also appear in --covar-name (PCs are sourced from the long-format
-design).)"
+design).  Quantile regression on a long-format phenotype is --method
+LoQus, which reads the same file format and does not take this flag.)"
+};
+
+inline const FlagDef kTimeName = {
+    "--time-name", "COL",
+    "LoQus: record time column (numeric; required, never missing)",
+    R"(Orders each subject's records and identifies them: (IID, time) must be
+unique and a missing time is an error.  It is NOT added to the null model;
+list it in --covar-name as well to adjust for it (e.g. age).)"
+};
+
+inline const FlagDef kGeeModel = {
+    "--gee-model", "NAME",
+    "LoQus: qr | linear | both (default: qr)",
+    R"(qr      smoothed quantile GEE, one column per --spasqr-taus level
+linear  identity-link GEE, one column 'linear'
+both    both; LOG10P_CCT combines the quantile columns only)"
+};
+
+inline const FlagDef kWorkingCorr = {
+    "--working-corr", "NAME",
+    "LoQus: independence | exchangeable (default: exchangeable)",
+    R"(Working within-subject correlation, re-estimated by moments from the
+null-model residual (psi for qr, e for linear) until it settles.  Validity
+does not depend on it; power does, mainly when subjects have different
+numbers of records.  If the exchangeable fit fails for a column, that column
+falls back to independence weights and a warning names it.)"
 };
 
 inline const FlagDef kPcCols = {
@@ -324,7 +351,7 @@ inline const FlagDef kOutlierAbs = {
 
 inline const FlagDef kSpasqrWriteOmega = {
     "--spasqr-write-omega", nullptr,
-    "Write the cross-tau residual correlation matrix to PREFIX.PHENO.SPAsqr[.chrN].omega (default: off)",
+    "Write the cross-tau residual correlation matrix to PREFIX.PHENO.SPAsqr[.chrN].omega (LoQus: .LoQus) (default: off)",
     R"(Flag is parameterless: present → written; absent → not written (default).
 
 Omega_ab = R_a^T R_b / sqrt(R_a^T R_a * R_b^T R_b) over the null-model
@@ -599,7 +626,8 @@ inline const FlagDef kSeed = {
 
 inline const FlagDef kSpasqrTaus = {
     "--spasqr-taus", "LIST",
-    "Comma-separated tau levels for SPAsqr, max 20 (default: 0.1,0.3,0.5,0.7,0.9)",
+    "Comma-separated tau levels for SPAsqr, max 20 (default: 0.1,0.3,0.5,0.7,0.9; "
+    "LoQus 0.1,0.2,...,0.9)",
     nullptr
 };
 
@@ -639,7 +667,8 @@ inline const FlagDef kSpasqrH = {
 inline const FlagDef kSpasqrHScale = {
     "--spasqr-h-scale", "FLOAT",
     "Divisor for IQR-based bandwidth: h = IQR(Y) / SCALE  "
-    "(default: 3 in score mode, 10 in --spasqr-mode wald; mutually exclusive with --spasqr-h)",
+    "(default: 3 in score mode, 10 in --spasqr-mode wald, 5 for LoQus; "
+    "mutually exclusive with --spasqr-h)",
     nullptr
 };
 
@@ -1127,6 +1156,54 @@ inline const MethodDef kSPAsqr = {
     nullptr,
 };
 
+// ── LoQus ──────────────────────────────────────────────────────
+// LOngitudinal QUantile Score test.  Runs on SPAsqr's
+// code path (dispatch sends it through the SPAsqr branch with the long-format
+// input of --longitudinal); this entry is its command-line name and help.
+inline const FlagDef *const kLoQusReq[] = {
+    &kGeno_input, &kPheno, &kOut, &kPhenoName, &kTimeName,
+    nullptr
+};
+
+inline const FlagDef *const kLoQusOpt[] = {
+    &kCovarName,    &kGeeModel,   &kWorkingCorr, &kSpGrm,
+    &kSpasqrTaus,   &kSpasqrTol,  &kSpasqrH,     &kSpasqrHScale,
+    &kOutlierIqr,   &kSpaZThresh, &kPredList,    &kSpasqrWriteOmega,
+    &kThreads,      &kChunkKsnp,  &kCompression, &kCompressionLevel,
+    &kKeep,         &kRemove,     &kExtract,     &kExclude,
+    &kGeno, &kMaf,  &kMac,        &kHwe,         &kHardCallThreshold, &kChr,
+    nullptr
+};
+
+inline const MethodDef kLoQus = {
+    "LoQus",
+    "LOngitudinal QUantile Score test (repeated measures)",
+    kLoQusReq,
+    kLoQusOpt,
+    "    --pheno FILE        long-format file: FID/IID + named columns, one row per record\n"
+    "    --pheno-name COLS   outcome column(s); --covar-name COLS covariates from the same file\n"
+    "    --time-name COL     record time: orders records, (IID, time) unique, never missing;\n"
+    "                        enters the model only if also listed in --covar-name",
+    R"(PREFIX.<COL>.LoQus[.gz|.zst]   one file per --pheno-name column
+  CHROM  POS  ID  REF  ALT  MISS_RATE  ALT_FREQ  MAC  LOG10P_HWE
+  LOG10P_CCT  LOG10P_tau{val}... [LOG10P_linear]  Z_tau{val}... [Z_linear]
+         Z_Norm_tau{val}... [Z_Norm_linear]  SPA_STATUS_tau{val}... [SPA_STATUS_linear]
+    Same columns as SPAsqr; the *_linear group is present with --gee-model
+    linear|both.  LOG10P_CCT combines the quantile columns only.
+)"
+    GRAB_SPA_STATUS_TABLE
+    GRAB_SPA_FALLBACK_NOTE,
+    R"(  Null model: per outcome and quantile level, a smoothed quantile GEE with a
+  working within-subject correlation (--working-corr) re-estimated from the
+  residuals; each subject is reduced to one weight a_i = 1' R_i^-1 psi_i and
+  tested with SPAsqr's retrospective score test and saddlepoint (empirical
+  CGF below MAC 400).  Covariates may be time-varying or not; that need not
+  be declared.  Records with a missing outcome or covariate are dropped per
+  outcome; a rank-deficient design is an error.  Defaults: nine quantile
+  levels 0.1..0.9, h = IQR/5, raw phenotype, score mode.  With --pred-list
+  the chromosome's LOCO PGS enters the null model as a covariate.)",
+};
+
 // ── WtCoxG ─────────────────────────────────────────────────────────
 inline const FlagDef *const kWtCoxGReq[] = {
     &kGeno_input, &kPheno, &kOut, &kRefAf, &kPrevalence,
@@ -1447,7 +1524,7 @@ inline const MethodDef kCalPairwiseIbd = {
 inline const MethodDef *const kAllMethods[] = {
     &kSPACox, &kSPAGRM, &kSAGELD, &kSPAGxE, &kSPAGxEmix, &kSPAmix, &kSPAmixPlus,
     &kSPAmixLocalPlus,
-    &kSPAsqr, &kWtCoxG, &kLEAF,
+    &kSPAsqr, &kLoQus, &kWtCoxG, &kLEAF,
     nullptr
 };
 
@@ -1461,7 +1538,7 @@ inline const MethodDef *const kAllUtilModes[] = {
 // area focussed on the seven core GWAS methods.
 inline const MethodDef *const kVisibleMethods[] = {
     &kSPACox, &kSPAGRM, &kSAGELD, &kSPAGxE, &kSPAGxEmix, &kSPAmix,
-    &kSPAsqr, &kWtCoxG, &kLEAF,
+    &kSPAsqr, &kLoQus, &kWtCoxG, &kLEAF,
     nullptr
 };
 
@@ -1499,6 +1576,7 @@ inline const FlagDef *const kInputFlags[] = {
     &kOut,         &kCompression, &kCompressionLevel,
     &kPheno,       &kCovar,       &kCovarName,
     &kPhenoName,   &kResidName,   &kRegressionModel, &kSaveResid,    &kLongitudinal,
+    &kTimeName,    &kGeeModel,    &kWorkingCorr,
     &kEnvirName,
     &kPcCols,      &kRefAf,
     &kSpGrmPlink2, &kIndAfCoef,   &kPairwiseIbd,
